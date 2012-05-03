@@ -1,0 +1,107 @@
+#!/bin/sh
+#
+# Pre-commit hook to format C++ code at commit time
+# To enable this hook, rename this file to "pre-commit" and copy it into .git/hooks
+
+if git rev-parse --verify HEAD >/dev/null 2>&1
+then
+	against=HEAD
+else
+	# Initial commit: diff against an empty tree object
+	against=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+fi
+
+# If you want to allow non-ascii filenames set this variable to true.
+allownonascii=$(git config hooks.allownonascii)
+
+# Redirect output to stderr.
+exec 1>&2
+
+# Cross platform projects tend to avoid non-ascii filenames; prevent
+# them from being added to the repository. We exploit the fact that the
+# printable range starts at the space character and ends with tilde.
+if [ "$allownonascii" != "true" ] &&
+	# Note that the use of brackets around a tr range is ok here, (it's
+	# even required, for portability to Solaris 10's /usr/bin/tr), since
+	# the square bracket bytes happen to fall in the designated range.
+	test $(git diff --cached --name-only --diff-filter=A -z $against |
+	  LC_ALL=C tr -d '[ -~]\0' | wc -c) != 0
+then
+	echo "Error: Attempt to add a non-ascii file name."
+	echo
+	echo "This can cause problems if you want to work"
+	echo "with people on other platforms."
+	echo
+	echo "To be portable it is advisable to rename the file ..."
+	echo
+	echo "If you know what you are doing you can disable this"
+	echo "check using:"
+	echo
+	echo "  git config hooks.allownonascii true"
+	echo
+	exit 1
+fi
+
+
+# Run astyle on modified files
+ASTYLE=astyle
+version=`$ASTYLE --version 2> /dev/null`
+if [ "$?" -ne 0 ] ; then
+	echo "Macadamian git pre-commit hook:"
+	echo "Did not find astyle, please install it before continuing."
+	exit 1
+fi
+
+
+ASTYLE_PARAMETERS="--style=allman \
+	--indent=spaces=4 \
+	--indent-preprocessor \
+	--convert-tabs \
+	--pad-oper \
+	--pad-header \
+	--unpad-paren \
+	--add-brackets \
+	--align-pointer=type \
+	--indent-col1-comments \
+	--min-conditional-indent=2 \
+	--preserve-date \
+	--suffix=none \
+	--quiet"
+
+function format_cpp {
+	file="${1}";
+	echo "${file}" | grep -ie "^.*\.\(cpp\|h\)$" > /dev/null
+
+	if [ "$?" -eq 0 ] ; then
+		if [ -f "${file}" ] ; then
+			$ASTYLE $ASTYLE_PARAMETERS "${file}"
+			git add "${file}"
+			if [ "$?" -ne 0 ] ; then
+				echo "Macadamian git pre-commit hook:"
+				echo "Error while running astyle on ${file} please fix it before continuing."
+				git stash pop --quiet
+				exit 1
+			fi
+		fi
+	fi
+}
+
+
+#echo "--Formatting source code--"
+
+git stash save --keep-index --quiet "pre-commit automatic stash"
+for file in `git diff-index --cached --name-only --diff-filter=ACMR $against` ; do
+	format_cpp "${file}"
+done
+git stash pop --quiet
+if [ "$?" -ne 0 ] ; then
+	echo "Warning: Macadamian git pre-commit hook:"
+	echo "Could not apply the unstaged changes back automatically"
+	echo "You may need to resolve conflicts and drop the automatic stash manually"
+fi
+
+#echo "--Formatting source code done--"
+
+
+# If there are whitespace errors, print the offending file names and fail.
+exec git diff-index --check --cached $against --
