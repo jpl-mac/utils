@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Pre-commit hook to format C++ code at commit time
+# Pre-commit hook to validate C++ code format at commit time among other things
 # To enable this hook, rename this file to "pre-commit" and copy it into .git/hooks
 
 if git rev-parse --verify HEAD >/dev/null 2>&1
@@ -43,64 +43,64 @@ then
 fi
 
 
-# Run astyle on modified files
-ASTYLE=astyle
+# Verify formatting of modified files
+ASTYLE="astyle"
+ASTYLE_OPTIONS_FILE="astyle.conf"
 version=`$ASTYLE --version 2> /dev/null`
 if [ "$?" -ne 0 ] ; then
-	echo "Macadamian git pre-commit hook:"
+	echo "git pre-commit hook:"
 	echo "Did not find astyle, please install it before continuing."
 	exit 1
 fi
 
-
-ASTYLE_PARAMETERS="--style=allman \
-	--indent=spaces=4 \
-	--indent-preprocessor \
-	--convert-tabs \
-	--pad-oper \
-	--pad-header \
-	--unpad-paren \
-	--add-brackets \
-	--align-pointer=type \
-	--indent-col1-comments \
-	--min-conditional-indent=2 \
-	--preserve-date \
-	--suffix=none \
-	--quiet"
-
-function format_cpp {
-	file="${1}";
-	echo "${file}" | grep -ie "^.*\.\(cpp\|h\)$" > /dev/null
-
-	if [ "$?" -eq 0 ] ; then
-		if [ -f "${file}" ] ; then
-			$ASTYLE $ASTYLE_PARAMETERS "${file}"
-			git add "${file}"
-			if [ "$?" -ne 0 ] ; then
-				echo "Macadamian git pre-commit hook:"
-				echo "Error while running astyle on ${file} please fix it before continuing."
-				git stash pop --quiet
-				exit 1
-			fi
-		fi
-	fi
-}
-
-
-#echo "--Formatting source code--"
-
-git stash save --keep-index --quiet "pre-commit automatic stash"
-for file in `git diff-index --cached --name-only --diff-filter=ACMR $against` ; do
-	format_cpp "${file}"
-done
-git stash pop --quiet
-if [ "$?" -ne 0 ] ; then
-	echo "Warning: Macadamian git pre-commit hook:"
-	echo "Could not apply the unstaged changes back automatically"
-	echo "You may need to resolve conflicts and drop the automatic stash manually"
+if [ ! -f $ASTYLE_OPTIONS_FILE ] ; then
+	echo "git pre-commit hook:"
+	echo "Options file $ASTYLE_OPTIONS_FILE does not exist, make sure you have the"
+	echo "latest version before continuing."
+	exit 1
 fi
 
-#echo "--Formatting source code done--"
+ASTYLE_PARAMETERS="--options=$ASTYLE_OPTIONS_FILE"
+FILE_PATTERN="\.(c|cpp|h)$"
+IGNORE_PATTERN="libv8"
+
+echo "--Checking style--"
+
+fail=false
+fileList=( )
+for file in `git diff-index --cached --name-only $against --diff-filter=ACMR | egrep $FILE_PATTERN | egrep -v $IGNORE_PATTERN` ; do
+	# nf is the temporary checkout. This makes sure we check against the
+	# revision in the index (and not the checked out version).
+	nf=`git checkout-index --temp ${file} | cut -f 1`
+	newfile="/tmp/${nf}.$(date +"%Y%m%d%H%M%S")"
+	astyle ${ASTYLE_PARAMETERS} < $nf > $newfile 2>> /dev/null
+	diff -u -p "${nf}" "${newfile}" > /dev/null
+	r=$?
+	rm "${newfile}"
+	rm "${nf}"
+	if [ $r != 0 ] ; then
+		fail=true
+		fileList+=($file)
+	fi
+done
+if $fail ; then
+	echo "==============================================================================="
+	echo " Code style error in:"
+	for file in "${fileList[@]}" ; do
+		echo "        $file"
+	done
+	echo " "
+	echo " Please fix before committing. Don't forget to run git add before trying to"
+	echo " commit again.  If the whole file is to be committed, this should work "
+	echo " (run from the top-level directory).  * Otherwise you can stash the unstaged "
+	echo " stuff away using 'git stash --keep-index' first. "
+	echo " "
+	echo " astyle ${ASTYLE_PARAMETERS} ${fileList[@]}; git add ${fileList[@]}"
+	echo " "
+	echo "=============================================================================== "
+	exit 1
+fi
+echo "--Checking style pass--"
 
 
 # If there are whitespace errors, print the offending file names and fail.
