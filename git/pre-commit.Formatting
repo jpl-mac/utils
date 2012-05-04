@@ -89,16 +89,25 @@ function format_cpp {
 
 #echo "--Formatting source code--"
 
+tmpFile="./pre-commit"$(date +"%Y%m%d%H%M%S")".diff"
+# save the diff of the unstaged work
+git diff > $tmpFile
 git stash save --keep-index --quiet "pre-commit automatic stash"
 for file in `git diff-index --cached --name-only --diff-filter=ACMR $against` ; do
 	format_cpp "${file}"
 done
-git stash pop --quiet
+# reapply unstaged only
+patch -p1 < $tmpFile
 if [ "$?" -ne 0 ] ; then
 	echo "Warning: Macadamian git pre-commit hook:"
 	echo "Could not apply the unstaged changes back automatically"
 	echo "You may need to resolve conflicts and drop the automatic stash manually"
 fi
+rm $tmpFile
+git stash drop --quiet
+# reset line endings messed up by patch
+#git stash --quiet
+#git stash pop --quiet
 
 #echo "--Formatting source code done--"
 
